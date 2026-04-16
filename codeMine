@@ -1,0 +1,100 @@
+#include <Arduino_BMI270_BMM150.h>
+
+const float SEUIL = 0.0220;
+
+float xPrev = 0, yPrev = 0, zPrev = 0;
+bool firstRead = true;
+
+// Remplace le bool par un système de temps
+bool alerteDeclenchee = false;
+unsigned long tempsDeclenchement = 0;
+const unsigned long COOLDOWN = 5000; 
+
+unsigned long startTime;
+const unsigned long TEMPS_INIT = 3000; 
+
+float variationFiltree = 0.0;
+const float ALPHA = 0.2;
+
+void setup() {
+  Serial.begin(115200);
+  Serial1.begin(9600);
+
+  while (!Serial);
+
+  if (!IMU.begin()) {
+    Serial.println("Erreur IMU");
+    while (1);
+  }
+
+  startTime = millis();
+  Serial.println("Initialisation capteur et communication SODAQ...");
+}
+
+void loop() {
+  // 1. Phase de stabilisation
+  if (millis() - startTime < TEMPS_INIT) {
+    Serial.println("Stabilisation...");
+    delay(200);
+    return;
+  }
+
+  // 2. Gestion du cooldown (attente 5 secondes)
+  if (alerteDeclenchee) {
+    if (millis() - tempsDeclenchement < COOLDOWN) {
+      Serial.println(">>> MINE DÉCLENCHÉE - EN ATTENTE <<<");
+      delay(500);
+      return;
+    } else {
+      // Réactivation après 5 secondes
+      Serial.println(">>> SYSTÈME RÉACTIVÉ <<<");
+      alerteDeclenchee = false;
+      firstRead = true; // reset pour éviter faux pic
+    }
+  }
+
+
+  float x, y, z;
+
+  if (IMU.accelerationAvailable()) {
+    IMU.readAcceleration(x, y, z);
+
+    if (firstRead) {
+      xPrev = x;
+      yPrev = y;
+      zPrev = z;
+      firstRead = false;
+      return;
+    }
+
+    float variationBrute =
+      abs(x - xPrev) +
+      abs(y - yPrev) +
+      abs(z - zPrev);
+
+    variationFiltree =
+      ALPHA * variationBrute + (1.0 - ALPHA) * variationFiltree;
+
+    Serial.print("Brute: ");
+    Serial.print(variationBrute, 4);
+    Serial.print("  | Filtree: ");
+    Serial.print(variationFiltree, 4);
+
+    if (variationFiltree > SEUIL) {
+      Serial.println("  >>> Bomba Explosion");
+      Serial1.println("BOOM");
+
+      // Active le cooldown
+      alerteDeclenchee = true;
+      tempsDeclenchement = millis();
+    } else {
+      Serial.println("  vibration faible");
+    }
+
+    xPrev = x;
+    yPrev = y;
+    zPrev = z;
+  }
+
+  delay(20);
+}
